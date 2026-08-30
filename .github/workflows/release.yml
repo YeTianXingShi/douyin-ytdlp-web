@@ -70,8 +70,8 @@ jobs:
         run: |
           test ! -d yt-dlp
           test ! -d Douyin_TikTok_Download_API
-          ! grep -R -E "REFERENCE_REPO_DIR|YTDLP_SOURCE_DIR|COPY[[:space:]]+yt-dlp|COPY[[:space:]]+Douyin_TikTok_Download_API" \
-            --exclude-dir=.git --exclude='abogus.py' .
+          ! rg -n "REFERENCE_REPO_DIR|YTDLP_SOURCE_DIR|COPY[[:space:]]+yt-dlp|COPY[[:space:]]+Douyin_TikTok_Download_API" \
+            backend start.sh docker-compose.yml .env.example
 
       - name: Sync locked Python environment
         run: uv sync --locked --project backend

@@ -8,6 +8,7 @@ from pydantic import BaseModel, Field, field_validator
 
 JobMode = Literal["single", "user_posts"]
 PostFilter = Literal["all", "not_downloaded", "downloaded", "failed", "skipped", "remote_missing"]
+RefreshTimeRange = Literal["all", "week", "month", "quarter", "half_year", "year"]
 
 
 class ProfileCreate(BaseModel):
@@ -45,6 +46,7 @@ class ProfileSummary(BaseModel):
 
 class ProfileRefreshCreate(BaseModel):
     max_items: int = Field(default=0, ge=0, le=10000)
+    time_range: RefreshTimeRange = "all"
 
 
 class RefreshSummary(BaseModel):
@@ -52,6 +54,7 @@ class RefreshSummary(BaseModel):
     profile_id: str
     job_id: str | None = None
     status: str
+    time_range: RefreshTimeRange = "all"
     discovered_count: int = 0
     new_count: int = 0
     changed_count: int = 0

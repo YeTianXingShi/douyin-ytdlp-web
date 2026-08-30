@@ -11,6 +11,7 @@ input, select, textarea { display: block; width: 100%; margin-top: 7px; border: 
 .inline-form input { flex: 1; margin-top: 0; }
 .toolbar { justify-content: space-between; flex-wrap: wrap; }
 .toolbar > div { flex: 1; }
+.refresh-range { min-width: 170px; margin: 0; }
 .actions { margin: 14px 0; flex-wrap: wrap; }
 button { border: 0; border-radius: 8px; padding: 10px 15px; background: #0b6efd; color: white; font-weight: 650; cursor: pointer; }
 button:disabled { opacity: .45; cursor: not-allowed; }

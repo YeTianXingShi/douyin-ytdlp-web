@@ -98,7 +98,7 @@ class JobManager:
         if not self.db.delete_profile(profile_id):
             raise KeyError(profile_id)
 
-    async def refresh_profile(self, profile_id: str, max_items: int = 0) -> str:
+    async def refresh_profile(self, profile_id: str, max_items: int = 0, time_range: str = "all") -> str:
         profile = self.db.profile_by_id(profile_id)
         if not profile:
             raise KeyError(profile_id)
@@ -108,15 +108,15 @@ class JobManager:
         pending = self.db.pending_refresh(profile_id)
         if pending:
             return pending["id"]
-        job_id = self.db.create_job("refresh", profile_id=profile_id, max_items=max_items or self.settings.max_items)
-        refresh_id = self.db.create_refresh(profile_id, job_id)
+        job_id = self.db.create_job("refresh", profile_id=profile_id, max_items=max_items or self.settings.max_items, time_range=time_range)
+        refresh_id = self.db.create_refresh(profile_id, job_id, time_range=time_range)
         await self.queue.put(job_id)
         return refresh_id
 
     async def create_legacy_job(self, source_url: str, mode: str, max_items: int = 0) -> str:
         if mode == "user_posts":
             profile = await self.add_profile(source_url)
-            refresh_id = await self.refresh_profile(profile["id"], max_items)
+            refresh_id = await self.refresh_profile(profile["id"], max_items, "all")
             refresh = self.db.get_refresh(refresh_id)
             return refresh["job_id"]
         aweme_id = await self._single_id(source_url)
@@ -290,7 +290,7 @@ class JobManager:
         self.db.update_refresh_progress(refresh_id, 0, "enumerating")
         posts: list[DouyinPost] = []
         try:
-            async for post in self.profile.iter_posts(profile["profile_url"], max_items=job["max_items"]):
+            async for post in self.profile.iter_posts(profile["profile_url"], max_items=job["max_items"], time_range=job["time_range"]):
                 posts.append(post)
                 if post.author_name and post.author_name != profile["display_name"]:
                     self.db.update_profile_display_name(job["profile_id"], post.author_name)

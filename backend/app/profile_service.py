@@ -4,7 +4,7 @@ import asyncio
 import secrets
 import string
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from typing import AsyncIterator
 from urllib.parse import parse_qs, urlparse
 
@@ -17,6 +17,14 @@ from .cookie_provider import CookieProvider
 
 VIDEO_TYPES = {0, 4}
 IMAGE_TYPES = {2, 68}
+TIME_RANGE_DAYS = {
+    "all": None,
+    "week": 7,
+    "month": 30,
+    "quarter": 90,
+    "half_year": 182,
+    "year": 365,
+}
 
 
 @dataclass(frozen=True)
@@ -153,7 +161,9 @@ class ProfileService:
 
         return find_name(payload)
 
-    async def iter_posts(self, source_url: str, max_items: int = 0) -> AsyncIterator[DouyinPost]:
+    async def iter_posts(self, source_url: str, max_items: int = 0, time_range: str = "all") -> AsyncIterator[DouyinPost]:
+        if time_range not in TIME_RANGE_DAYS:
+            raise ValueError(f"Unsupported profile refresh time range: {time_range}")
         sec_user_id = await self.resolve_sec_user_id(source_url)
         cookie_header = self.cookies.cookie_header()
         headers = {
@@ -167,6 +177,8 @@ class ProfileService:
         seen_ids: set[str] = set()
         seen_pages: set[tuple[str, ...]] = set()
         yielded = 0
+        days = TIME_RANGE_DAYS[time_range]
+        cutoff = date.today() - timedelta(days=days) if days is not None else None
         async with httpx.AsyncClient(
             timeout=self.settings.request_timeout,
             proxy=self.settings.proxy,
@@ -199,6 +211,7 @@ class ProfileService:
                 if not raw_items:
                     return
 
+                page_has_older_post = False
                 for item in raw_items:
                     if not isinstance(item, dict):
                         continue
@@ -227,6 +240,13 @@ class ProfileService:
                         upload_date = datetime.fromtimestamp(int(upload_date), tz=timezone.utc).strftime("%Y%m%d") if upload_date else None
                     except Exception:
                         upload_date = None
+                    if cutoff is not None and upload_date:
+                        try:
+                            if datetime.strptime(upload_date, "%Y%m%d").date() < cutoff:
+                                page_has_older_post = True
+                                continue
+                        except ValueError:
+                            pass
                     if aweme_type in IMAGE_TYPES:
                         yield DouyinPost(aweme_id, aweme_type, title, upload_date, author_name)
                     elif aweme_type in VIDEO_TYPES or aweme_type is None:
@@ -236,6 +256,12 @@ class ProfileService:
                     yielded += 1
                     if max_items and yielded >= max_items:
                         return
+
+                # The endpoint returns newest works first. Once a page reaches
+                # the cutoff, later pages cannot contain newer works, so stop
+                # paging after yielding the in-range items from this page.
+                if page_has_older_post:
+                    return
 
                 next_cursor = payload.get("max_cursor")
                 has_more = payload.get("has_more")

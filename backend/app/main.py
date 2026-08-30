@@ -88,7 +88,7 @@ async def delete_profile(profile_id: str) -> dict[str, str]:
 @app.post("/api/profiles/{profile_id}/refresh", response_model=RefreshSummary, dependencies=[Depends(require_admin)])
 async def refresh_profile(profile_id: str, payload: ProfileRefreshCreate) -> dict:
     try:
-        refresh_id = await manager.refresh_profile(profile_id, payload.max_items)
+        refresh_id = await manager.refresh_profile(profile_id, payload.max_items, payload.time_range)
         summary = manager.refresh_summary(refresh_id)
         return summary
     except KeyError as exc:

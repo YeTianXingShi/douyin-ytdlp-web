@@ -58,6 +58,7 @@ class JobDB:
                     missing_count INTEGER NOT NULL DEFAULT 0,
                     skipped_count INTEGER NOT NULL DEFAULT 0,
                     error TEXT,
+                    time_range TEXT NOT NULL DEFAULT 'all',
                     created_at TEXT NOT NULL,
                     completed_at TEXT
                 );
@@ -100,6 +101,7 @@ class JobDB:
                     profile_id TEXT REFERENCES profiles(id) ON DELETE SET NULL,
                     refresh_id TEXT REFERENCES profile_refreshes(id) ON DELETE SET NULL,
                     max_items INTEGER NOT NULL DEFAULT 0,
+                    time_range TEXT NOT NULL DEFAULT 'all',
                     status TEXT NOT NULL,
                     phase TEXT NOT NULL,
                     discovered INTEGER NOT NULL DEFAULT 0,
@@ -134,6 +136,12 @@ class JobDB:
                 CREATE INDEX IF NOT EXISTS idx_jobs_status ON jobs(status);
                 """
             )
+            # Additive columns keep an already-running local database usable
+            # after this feature is enabled; new databases get them above.
+            for table in ("profile_refreshes", "jobs"):
+                columns = {row[1] for row in self._conn.execute(f"PRAGMA table_info({table})").fetchall()}
+                if "time_range" not in columns:
+                    self._conn.execute(f"ALTER TABLE {table} ADD COLUMN time_range TEXT NOT NULL DEFAULT 'all'")
             # Repair refresh jobs created by the early profile-management build.
             self._conn.execute("UPDATE jobs SET refresh_id = (SELECT id FROM profile_refreshes WHERE profile_refreshes.job_id = jobs.id) WHERE kind = 'refresh' AND refresh_id IS NULL")
             self._conn.commit()
@@ -200,12 +208,12 @@ class JobDB:
             "skipped_count": counts.get("skipped", 0),
         }
 
-    def create_refresh(self, profile_id: str, job_id: str) -> str:
+    def create_refresh(self, profile_id: str, job_id: str, time_range: str = "all") -> str:
         refresh_id = str(uuid.uuid4())
         now = utc_now()
         self._execute(
-            "INSERT INTO profile_refreshes (id, profile_id, job_id, status, created_at) VALUES (?, ?, ?, 'queued', ?)",
-            (refresh_id, profile_id, job_id, now),
+            "INSERT INTO profile_refreshes (id, profile_id, job_id, status, time_range, created_at) VALUES (?, ?, ?, 'queued', ?, ?)",
+            (refresh_id, profile_id, job_id, time_range, now),
         )
         self._execute("UPDATE jobs SET refresh_id = ? WHERE id = ?", (refresh_id, job_id))
         self.set_profile_refresh(profile_id, "queued")
@@ -314,12 +322,12 @@ class JobDB:
         with self._lock:
             return self._conn.execute("SELECT * FROM profile_posts WHERE profile_id = ? AND aweme_id = ?", (profile_id, aweme_id)).fetchone()
 
-    def create_job(self, kind: str, profile_id: str | None = None, refresh_id: str | None = None, max_items: int = 0) -> str:
+    def create_job(self, kind: str, profile_id: str | None = None, refresh_id: str | None = None, max_items: int = 0, time_range: str = "all") -> str:
         job_id = str(uuid.uuid4())
         now = utc_now()
         self._execute(
-            "INSERT INTO jobs (id, kind, profile_id, refresh_id, max_items, status, phase, created_at, updated_at) VALUES (?, ?, ?, ?, ?, 'queued', 'queued', ?, ?)",
-            (job_id, kind, profile_id, refresh_id, max_items, now, now),
+            "INSERT INTO jobs (id, kind, profile_id, refresh_id, max_items, time_range, status, phase, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, 'queued', 'queued', ?, ?)",
+            (job_id, kind, profile_id, refresh_id, max_items, time_range, now, now),
         )
         return job_id
 

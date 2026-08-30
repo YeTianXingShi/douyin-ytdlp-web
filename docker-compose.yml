@@ -1,10 +1,13 @@
 services:
   backend:
-    image: ${IMAGE_REPOSITORY:-ghcr.io/yetianxingshi/douyin-ytdlp-web}:${IMAGE_TAG:-latest}
+    # Compose is intentionally self-contained and does not read .env.
+    # Change this tag here when deploying another published version.
+    image: ghcr.io/yetianxingshi/douyin-ytdlp-web:v0.0.1
     environment:
-      ADMIN_TOKEN: ${ADMIN_TOKEN:?set ADMIN_TOKEN in .env}
+      # Replace this placeholder before exposing the service.
+      ADMIN_TOKEN: "replace-with-a-long-random-token"
       DOUYIN_COOKIE_FILE: /run/secrets/douyin_cookies
-      DOUYIN_USER_AGENT: ${DOUYIN_USER_AGENT:-Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36}
+      DOUYIN_USER_AGENT: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36"
       DOWNLOAD_ROOT: /app/downloads
       STATE_DIR: /app/state
       DATABASE_FILE: /app/state/jobs.sqlite3
@@ -19,4 +22,5 @@ services:
 
 secrets:
   douyin_cookies:
-    file: ${DOUYIN_COOKIE_FILE:?set DOUYIN_COOKIE_FILE to a Netscape cookie file}
+    # Put a Netscape/Mozilla cookie export at this path. Keep it out of Git.
+    file: ./cookie/douyin-cookies.txt

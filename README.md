@@ -57,9 +57,11 @@ ghcr.io/yetianxingshi/douyin-ytdlp-web:latest
 部署时可以固定版本：
 
 ```bash
-IMAGE_TAG=v0.0.1 docker compose pull
-IMAGE_TAG=v0.0.1 docker compose up -d
+docker compose pull
+docker compose up -d
 ```
+
+`docker-compose.yml` 是自包含配置，不依赖项目 `.env` 文件；镜像版本、管理员 Token、浏览器 User-Agent、数据目录和 Cookie 文件路径都直接写在 Compose 文件中。首次部署前请编辑其中的 `ADMIN_TOKEN` 占位值，并将 Netscape Cookie 文件放到 `./cookie/douyin-cookies.txt`；不要把真实 Token 或 Cookie 提交到 Git。
 
 镜像内的 yt-dlp 来自锁定的 PyPI `yt-dlp[default]`，不包含任何外部源码仓库。版本号以根目录 `VERSION` 为准，并与后端、前端和镜像标签保持一致；发布说明见 `CHANGELOG.md`。
 

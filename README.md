@@ -47,11 +47,11 @@ cp .env.example .env
 
 ## Docker 与发布
 
-首个版本为 `v0.0.1`。GitHub Release 发布后，Actions 只使用本仓库源码构建 `linux/amd64` 镜像，并推送以下 GHCR 标签：
+当前版本为 `v0.0.2`。GitHub Release 发布后，Actions 只使用本仓库源码构建 `linux/amd64` 镜像，并推送对应版本的 GHCR 标签：
 
 ```text
-ghcr.io/yetianxingshi/douyin-ytdlp-web:v0.0.1
-ghcr.io/yetianxingshi/douyin-ytdlp-web:0.0.1
+ghcr.io/yetianxingshi/douyin-ytdlp-web:v0.0.2
+ghcr.io/yetianxingshi/douyin-ytdlp-web:0.0.2
 ghcr.io/yetianxingshi/douyin-ytdlp-web:latest
 ```
 

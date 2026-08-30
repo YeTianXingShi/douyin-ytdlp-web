@@ -2,7 +2,7 @@ services:
   backend:
     # Compose is intentionally self-contained and does not read .env.
     # Change this tag here when deploying another published version.
-    image: ghcr.io/yetianxingshi/douyin-ytdlp-web:v0.0.1
+    image: ghcr.io/yetianxingshi/douyin-ytdlp-web:v0.0.2
     environment:
       # Replace this placeholder before exposing the service.
       ADMIN_TOKEN: "replace-with-a-long-random-token"

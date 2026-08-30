@@ -280,10 +280,11 @@ class JobDB:
             items = self._conn.execute("SELECT * FROM profile_refresh_items WHERE refresh_id = ?", (refresh_id,)).fetchall()
             discovered_ids = {row["aweme_id"] for row in items}
             now = utc_now()
-            self._conn.execute(
-                "UPDATE profile_posts SET remote_state = 'remote_missing', updated_at = ? WHERE profile_id = ? AND aweme_id NOT IN ({})".format(",".join("?" * len(discovered_ids)) if discovered_ids else "SELECT NULL"),
-                (now, refresh["profile_id"], *discovered_ids) if discovered_ids else (now, refresh["profile_id"]),
-            )
+            if refresh["time_range"] == "all":
+                self._conn.execute(
+                    "UPDATE profile_posts SET remote_state = 'remote_missing', updated_at = ? WHERE profile_id = ? AND aweme_id NOT IN ({})".format(",".join("?" * len(discovered_ids)) if discovered_ids else "SELECT NULL"),
+                    (now, refresh["profile_id"], *discovered_ids) if discovered_ids else (now, refresh["profile_id"]),
+                )
             for row in items:
                 if row["aweme_id"] not in selected:
                     continue

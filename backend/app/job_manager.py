@@ -347,7 +347,11 @@ class JobManager:
                 continue
             if not post:
                 post = {"video_url": item["video_url"], "title": item["title"]}
-            attempt = int(post.get("attempt_count", item["attempt_count"])) + 1
+            # Profile posts come from sqlite3 with a Row factory, which
+            # supports mapping access but not dict.get(). Legacy single-video
+            # jobs use the fallback dict above, so select the value by branch.
+            attempt_value = post["attempt_count"] if profile_id else item["attempt_count"]
+            attempt = int(attempt_value or 0) + 1
             now = datetime.now(timezone.utc).isoformat()
             if profile_id:
                 self.db.update_post(profile_id, item["aweme_id"], download_status="downloading", attempt_count=attempt, last_attempt_at=now)

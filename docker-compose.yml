@@ -1,0 +1,24 @@
+services:
+  backend:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    environment:
+      ADMIN_TOKEN: ${ADMIN_TOKEN:?set ADMIN_TOKEN in .env}
+      DOUYIN_COOKIE_FILE: /run/secrets/douyin_cookies
+      DOUYIN_USER_AGENT: ${DOUYIN_USER_AGENT:-Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36}
+      DOWNLOAD_ROOT: /app/downloads
+      STATE_DIR: /app/state
+      DATABASE_FILE: /app/state/jobs.sqlite3
+      DOWNLOAD_ARCHIVE: /app/state/download-archive.txt
+    volumes:
+      - ./downloads:/app/downloads
+      - ./state:/app/state
+    secrets:
+      - douyin_cookies
+    ports:
+      - "8000:8000"
+
+secrets:
+  douyin_cookies:
+    file: ${DOUYIN_COOKIE_FILE:?set DOUYIN_COOKIE_FILE to a Netscape cookie file}

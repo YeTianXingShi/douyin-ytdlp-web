@@ -1,0 +1,22 @@
+[project]
+name = "douyin-ytdlp-backend"
+version = "0.1.0"
+description = "FastAPI backend for the Douyin yt-dlp web downloader"
+requires-python = ">=3.11"
+dependencies = [
+    "fastapi>=0.110",
+    "httpx>=0.27",
+    "uvicorn[standard]>=0.29",
+    "pydantic>=2.7",
+    "gmssl>=3.2.2",
+    "yt-dlp",
+]
+
+[tool.uv]
+# This repository is an application, not a distributable Python package.
+package = false
+
+[tool.uv.sources]
+# Keep the local yt-dlp checkout as the single source of truth for the
+# extractor behavior used by this application.
+yt-dlp = { path = "../yt-dlp" }

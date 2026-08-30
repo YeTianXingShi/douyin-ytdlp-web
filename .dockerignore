@@ -1,0 +1,13 @@
+.git/
+**/.git/
+downloads/
+state/
+secrets/
+.env
+cookie/
+frontend/node_modules/
+frontend/dist/
+**/__pycache__/
+**/*.pyc
+**/.venv/
+.DS_Store

@@ -27,7 +27,7 @@ from .schemas import (
 from .security import require_admin
 
 
-app = FastAPI(title="Douyin yt-dlp Web Downloader", version="0.2.0")
+app = FastAPI(title="Douyin yt-dlp Web Downloader", version=settings.app_version)
 manager = JobManager(settings)
 
 
@@ -43,7 +43,7 @@ async def shutdown() -> None:
 
 @app.get("/healthz")
 async def healthz() -> dict[str, str]:
-    return {"status": "ok"}
+    return {"status": "ok", "version": settings.app_version}
 
 
 @app.post("/api/jobs", response_model=JobCreated, dependencies=[Depends(require_admin)])

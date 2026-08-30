@@ -1,0 +1,163 @@
+name: Release Docker image
+
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: read
+  packages: write
+
+env:
+  IMAGE_NAME: ghcr.io/yetianxingshi/douyin-ytdlp-web
+
+jobs:
+  build-and-publish:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out the release source
+        uses: actions/checkout@v6
+        with:
+          ref: ${{github.event.release.tag_name}}
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          version: latest
+          enable-cache: true
+
+      - name: Validate release and dependency versions
+        id: version
+        env:
+          RELEASE_TAG: ${{github.event.release.tag_name}}
+        run: |
+          python - <<'PY'
+          import json
+          import os
+          import re
+          import tomllib
+          from pathlib import Path
+
+          version = Path("VERSION").read_text(encoding="utf-8").strip()
+          tag = os.environ["RELEASE_TAG"]
+          if not re.fullmatch(r"\d+\.\d+\.\d+", version):
+              raise SystemExit(f"VERSION must be semver, got {version!r}")
+          if tag != f"v{version}":
+              raise SystemExit(f"release tag {tag!r} does not match v{version}")
+
+          backend = tomllib.loads(Path("backend/pyproject.toml").read_text(encoding="utf-8"))
+          backend_version = backend["project"]["version"]
+          frontend = json.loads(Path("frontend/package.json").read_text(encoding="utf-8"))
+          frontend_version = frontend["version"]
+          lock = json.loads(Path("frontend/package-lock.json").read_text(encoding="utf-8"))
+          lock_version = lock["packages"][""]["version"]
+          if {backend_version, frontend_version, lock_version} != {version}:
+              raise SystemExit(
+                  "package versions do not match VERSION: "
+                  f"backend={backend_version}, frontend={frontend_version}, lock={lock_version}"
+              )
+          print(f"Validated VERSION={version}, release tag={tag}")
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
+              output.write(f"version={version}\n")
+          PY
+
+      - name: Verify the build context is self-contained
+        run: |
+          test ! -d yt-dlp
+          test ! -d Douyin_TikTok_Download_API
+          ! grep -R -E "REFERENCE_REPO_DIR|YTDLP_SOURCE_DIR|COPY[[:space:]]+yt-dlp|COPY[[:space:]]+Douyin_TikTok_Download_API" \
+            --exclude-dir=.git --exclude='abogus.py' .
+
+      - name: Sync locked Python environment
+        run: uv sync --locked --project backend
+
+      - name: Verify PyPI yt-dlp and bundled A-Bogus
+        id: dependencies
+        run: |
+          uv run --project backend python - <<'PY'
+          import importlib.metadata
+          import inspect
+          import os
+          import yt_dlp
+          from backend.app.abogus_adapter import make_a_bogus
+
+          package_path = inspect.getfile(yt_dlp)
+          if "/site-packages/" not in package_path:
+              raise SystemExit(f"yt-dlp is not installed from site-packages: {package_path}")
+          ytdlp_version = importlib.metadata.version("yt-dlp")
+          print(f"yt-dlp={ytdlp_version} ({package_path})")
+          print(f"A-Bogus sample={make_a_bogus({'sec_user_id': 'release-check', 'msToken': 'release-check'})[:12]}...")
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
+              output.write(f"yt_dlp_version={ytdlp_version}\n")
+          PY
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Build frontend
+        working-directory: frontend
+        run: |
+          npm ci
+          npm run build
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{github.actor}}
+          password: ${{secrets.GITHUB_TOKEN}}
+
+      - name: Generate image metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{env.IMAGE_NAME}}
+          tags: |
+            type=raw,value=v${{steps.version.outputs.version}}
+            type=raw,value=${{steps.version.outputs.version}}
+            type=raw,value=latest
+          labels: |
+            org.opencontainers.image.version=${{steps.version.outputs.version}}
+            org.opencontainers.image.source=https://github.com/${{github.repository}}
+
+      - name: Build and publish linux/amd64 image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: backend/Dockerfile
+          platforms: linux/amd64
+          build-args: |
+            APP_VERSION=${{steps.version.outputs.version}}
+          push: true
+          tags: ${{steps.meta.outputs.tags}}
+          labels: ${{steps.meta.outputs.labels}}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Write Actions summary
+        env:
+          VERSION: ${{steps.version.outputs.version}}
+          YTDLP_VERSION: ${{steps.dependencies.outputs.yt_dlp_version}}
+        run: |
+          {
+            echo "## douyin-ytdlp-web v${VERSION}"
+            echo
+            echo "- Docker image: \`${IMAGE_NAME}\`"
+            echo "- Tags: \`v${VERSION}\`, \`${VERSION}\`, \`latest\`"
+            echo "- Platform: \`linux/amd64\`"
+            echo "- Application version: \`${VERSION}\`"
+            echo "- yt-dlp: \`${YTDLP_VERSION}\` from the PyPI registry (locked by \`backend/uv.lock\`)"
+            echo "- A-Bogus: bundled module \`backend/app/vendor/abogus.py\` (GPLv3; see \`NOTICE.md\`)"
+          } >> "${GITHUB_STEP_SUMMARY}"

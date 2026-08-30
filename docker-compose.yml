@@ -1,8 +1,6 @@
 services:
   backend:
-    build:
-      context: .
-      dockerfile: backend/Dockerfile
+    image: ${IMAGE_REPOSITORY:-ghcr.io/yetianxingshi/douyin-ytdlp-web}:${IMAGE_TAG:-latest}
     environment:
       ADMIN_TOKEN: ${ADMIN_TOKEN:?set ADMIN_TOKEN in .env}
       DOUYIN_COOKIE_FILE: /run/secrets/douyin_cookies

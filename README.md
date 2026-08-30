@@ -1,6 +1,6 @@
 # Douyin yt-dlp Web
 
-基于本地 yt-dlp 的抖音单视频和用户主页作品管理 Web 应用。
+基于 PyPI `yt-dlp[default]` 的抖音单视频和用户主页作品管理 Web 应用。
 
 ## 功能
 
@@ -18,18 +18,11 @@
 - Python 3.11+
 - [uv](https://docs.astral.sh/uv/)
 - Node.js/npm
-- 本地 yt-dlp 源码目录：`yt-dlp/`
+- yt-dlp 由 uv 从 PyPI 安装：`yt-dlp[default]`
 
 Python 后端必须通过 uv 隔离环境运行，不使用系统 Python 或全局 pip。
 
 ## 快速开始
-
-准备本地依赖目录：
-
-```bash
-git clone https://github.com/yt-dlp/yt-dlp.git yt-dlp
-git clone https://github.com/Evil0ctal/Douyin_TikTok_Download_API.git Douyin_TikTok_Download_API
-```
 
 配置并启动：
 
@@ -50,6 +43,25 @@ cp .env.example .env
 ```
 
 生产模式先执行 `cd frontend && npm run build`，再运行 `FRONTEND_MODE=preview ./start.sh`。远程访问必须使用 HTTPS 反向代理，并设置管理员 Bearer Token。
+
+## Docker 与发布
+
+首个版本为 `v0.0.1`。GitHub Release 发布后，Actions 只使用本仓库源码构建 `linux/amd64` 镜像，并推送以下 GHCR 标签：
+
+```text
+ghcr.io/yetianxingshi/douyin-ytdlp-web:v0.0.1
+ghcr.io/yetianxingshi/douyin-ytdlp-web:0.0.1
+ghcr.io/yetianxingshi/douyin-ytdlp-web:latest
+```
+
+部署时可以固定版本：
+
+```bash
+IMAGE_TAG=v0.0.1 docker compose pull
+IMAGE_TAG=v0.0.1 docker compose up -d
+```
+
+镜像内的 yt-dlp 来自锁定的 PyPI `yt-dlp[default]`，不包含任何外部源码仓库。版本号以根目录 `VERSION` 为准，并与后端、前端和镜像标签保持一致；发布说明见 `CHANGELOG.md`。
 
 ## 配置
 
@@ -83,12 +95,12 @@ Authorization: Bearer <ADMIN_TOKEN>
 
 ## 参考项目
 
-本项目没有复制参考项目中的硬编码 Cookie、Token 或部署配置，仅在许可证允许范围内参考其接口参数、主页枚举和 A-Bogus 适配思路：
+本项目没有复制参考项目中的硬编码 Cookie、Token 或部署配置。yt-dlp 通过 PyPI 安装，A-Bogus 必要算法已内置在 `backend/app/vendor/abogus.py`；以下项目只作为接口、算法和提取器行为参考，不是运行时依赖：
 
 - yt-dlp：<https://github.com/yt-dlp/yt-dlp>
 - Douyin_TikTok_Download_API：<https://github.com/Evil0ctal/Douyin_TikTok_Download_API>
 
-yt-dlp 负责视频详情提取和下载；本项目独立的主页服务负责抖音用户作品分页和发现结果管理。
+yt-dlp 负责视频详情提取和下载；本项目独立的主页服务负责抖音用户作品分页和发现结果管理。A-Bogus 内置代码的来源和许可证见 `NOTICE.md`。
 
 ## 验证与运行数据
 

@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import sys
 from pathlib import Path
 from typing import Any, Callable
 
@@ -25,13 +24,11 @@ class _Logger:
 
 
 class YtdlpService:
-    def __init__(self, source_dir: Path, cookie_file: Path, archive_file: Path, user_agent: str):
-        if str(source_dir) not in sys.path:
-            sys.path.insert(0, str(source_dir))
+    def __init__(self, cookie_file: Path, archive_file: Path, user_agent: str):
         try:
             import yt_dlp
         except ImportError as exc:
-            raise RuntimeError("yt-dlp source directory is not importable") from exc
+            raise RuntimeError("yt-dlp package is unavailable; run uv sync") from exc
         self.yt_dlp = yt_dlp
         self.cookie_file = cookie_file
         self.archive_file = archive_file

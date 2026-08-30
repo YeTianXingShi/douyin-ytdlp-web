@@ -18,12 +18,20 @@ def _path_env(name: str, default: Path) -> Path:
     return value.resolve()
 
 
+def _app_version() -> str:
+    configured = os.getenv("APP_VERSION")
+    if configured:
+        return configured.removeprefix("v")
+    version_file = PROJECT_ROOT / "VERSION"
+    try:
+        return version_file.read_text(encoding="utf-8").strip()
+    except OSError:
+        return "dev"
+
+
 @dataclass(frozen=True)
 class Settings:
-    ytdlp_source_dir: Path = _path_env("YTDLP_SOURCE_DIR", PROJECT_ROOT / "yt-dlp")
-    reference_repo_dir: Path = _path_env(
-        "REFERENCE_REPO_DIR", PROJECT_ROOT / "Douyin_TikTok_Download_API"
-    )
+    app_version: str = _app_version()
     cookie_file: Path = _path_env(
         "DOUYIN_COOKIE_FILE", PROJECT_ROOT / "secrets" / "douyin-cookies.txt"
     )

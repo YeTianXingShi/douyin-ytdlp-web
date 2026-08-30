@@ -122,7 +122,7 @@ class ProfileService:
             params = self._params(sec_user_id, 0)
             params.pop("max_cursor", None)
             params.pop("count", None)
-            params["a_bogus"] = make_a_bogus(params, self.settings.reference_repo_dir)
+            params["a_bogus"] = make_a_bogus(params)
             async with httpx.AsyncClient(
                 timeout=self.settings.request_timeout,
                 proxy=self.settings.proxy,
@@ -174,7 +174,7 @@ class ProfileService:
         ) as client:
             while True:
                 params = self._params(sec_user_id, cursor)
-                params["a_bogus"] = make_a_bogus(params, self.settings.reference_repo_dir)
+                params["a_bogus"] = make_a_bogus(params)
                 try:
                     response = await client.get(self.endpoint, params=params)
                     response.raise_for_status()

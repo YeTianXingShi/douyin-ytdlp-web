@@ -14,5 +14,3 @@ __pycache__/
 backend/.venv/
 frontend/node_modules/
 frontend/dist/
-yt-dlp/
-Douyin_TikTok_Download_API/

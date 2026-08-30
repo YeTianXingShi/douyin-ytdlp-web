@@ -74,11 +74,11 @@ if [ "$backend_running" -eq 0 ]; then
   echo "正在启动后端（http://${HOST}:${PORT}）..."
   if [ -f "$ENV_FILE" ]; then
     # 使用 uv 的 dotenv 解析器，避免 User-Agent 等值被 shell 错误解释。
-    PYTHONPATH="$ROOT_DIR:$ROOT_DIR/yt-dlp${PYTHONPATH:+:$PYTHONPATH}" \
+    PYTHONPATH="$ROOT_DIR${PYTHONPATH:+:$PYTHONPATH}" \
       nohup uv run --project "$ROOT_DIR/backend" --env-file "$ENV_FILE" python -m uvicorn backend.app.main:app \
         --host "$HOST" --port "$PORT" >>"$LOG_FILE" 2>&1 &
   else
-    PYTHONPATH="$ROOT_DIR:$ROOT_DIR/yt-dlp${PYTHONPATH:+:$PYTHONPATH}" \
+    PYTHONPATH="$ROOT_DIR${PYTHONPATH:+:$PYTHONPATH}" \
       nohup uv run --project "$ROOT_DIR/backend" python -m uvicorn backend.app.main:app \
         --host "$HOST" --port "$PORT" >>"$LOG_FILE" 2>&1 &
   fi

@@ -45,7 +45,7 @@ class JobManager:
         self.db = JobDB(settings.database_file)
         self.cookies = CookieProvider(settings.cookie_file)
         self.profile = ProfileService(settings, self.cookies)
-        self.ytdlp = YtdlpService(settings.ytdlp_source_dir, settings.cookie_file, settings.archive_file, settings.user_agent)
+        self.ytdlp = YtdlpService(settings.cookie_file, settings.archive_file, settings.user_agent)
         self.queue: asyncio.Queue[str] = asyncio.Queue()
         self.worker_task: asyncio.Task[None] | None = None
 

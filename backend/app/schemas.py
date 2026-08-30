@@ -34,6 +34,12 @@ class ProfileSummary(BaseModel):
     sec_user_id: str
     profile_url: str
     display_name: str | None = None
+    media_dir: str
+    poster_file: str | None = None
+    backdrop_file: str | None = None
+    metadata_updated_at: datetime | None = None
+    metadata_error_code: str | None = None
+    metadata_error_message: str | None = None
     last_refresh_at: datetime | None = None
     last_refresh_status: str | None = None
     last_refresh_error: str | None = None
@@ -87,6 +93,10 @@ class DownloadCreate(BaseModel):
 
 class RetryCreate(BaseModel):
     aweme_ids: list[str] = Field(min_length=1, max_length=10000)
+
+
+class MetadataRefreshCreate(BaseModel):
+    aweme_ids: list[str] = Field(default_factory=list, max_length=10000)
 
 
 class JobCreated(BaseModel):
@@ -162,13 +172,52 @@ class ProfilePost(BaseModel):
     profile_id: str
     aweme_id: str
     title: str | None = None
+    description: str | None = None
     upload_date: str | None = None
+    timestamp: int | None = None
     aweme_type: int | None = None
     video_url: str
+    channel: str | None = None
+    channel_id: str | None = None
+    channel_url: str | None = None
+    uploader: str | None = None
+    uploader_id: str | None = None
+    uploader_url: str | None = None
     remote_state: str
     download_status: str
     download_file: str | None = None
+    media_file: str | None = None
+    nfo_file: str | None = None
+    thumbnail_file: str | None = None
     downloaded_at: datetime | None = None
+    media_title_at_download: str | None = None
+    season_number: int | None = None
+    episode_number: int | None = None
+    aired_date: str | None = None
+    duration: float | None = None
+    view_count: int | None = None
+    like_count: int | None = None
+    comment_count: int | None = None
+    repost_count: int | None = None
+    save_count: int | None = None
+    stats_updated_at: datetime | None = None
+    format_id: str | None = None
+    width: int | None = None
+    height: int | None = None
+    fps: float | None = None
+    vcodec: str | None = None
+    acodec: str | None = None
+    filesize: int | None = None
+    container_ext: str | None = None
+    track: str | None = None
+    artists_json: str | None = None
+    album: str | None = None
+    availability: str | None = None
+    metadata_updated_at: datetime | None = None
+    metadata_error_code: str | None = None
+    metadata_error_message: str | None = None
+    artwork_error_code: str | None = None
+    artwork_error_message: str | None = None
     attempt_count: int = 0
     last_attempt_at: datetime | None = None
     last_error_code: str | None = None

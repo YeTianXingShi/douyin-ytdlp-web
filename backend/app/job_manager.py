@@ -13,7 +13,17 @@ import httpx
 
 from .config import Settings
 from .cookie_provider import CookieProvider
-from .db import JobDB
+from .db import JobDB, utc_now
+from .jellyfin import (
+    download_image,
+    episode_stem,
+    safe_component,
+    single_media_dir,
+    write_episode_nfo,
+    write_movie_nfo,
+    write_profile_nfo,
+    write_season_nfo,
+)
 from .profile_service import IMAGE_TYPES, VIDEO_TYPES, DouyinPost, ProfileService
 from .schemas import CurrentItem, JobItem, JobStatus, ProfilePost, ProfileSummary, RefreshItem, RefreshSummary
 from .ytdlp_service import YtdlpService
@@ -48,6 +58,23 @@ class JobManager:
         self.ytdlp = YtdlpService(settings.cookie_file, settings.archive_file, settings.user_agent)
         self.queue: asyncio.Queue[str] = asyncio.Queue()
         self.worker_task: asyncio.Task[None] | None = None
+
+    async def _save_profile_artwork(self, profile: Any) -> None:
+        try:
+            urls = await self.profile.fetch_profile_artwork(profile["sec_user_id"])
+        except Exception:
+            return
+        if not urls:
+            return
+        image, _ = await asyncio.to_thread(
+            download_image,
+            urls,
+            self.settings.download_root / profile["media_dir"] / "poster",
+            {"User-Agent": self.settings.user_agent, "Referer": "https://www.douyin.com/"},
+            self.settings.request_timeout,
+        )
+        if image:
+            self.db.update_profile_metadata(profile["id"], poster_file=str(image.relative_to(self.settings.download_root)))
 
     async def start(self) -> None:
         self.settings.state_dir.mkdir(parents=True, exist_ok=True)
@@ -90,9 +117,15 @@ class JobManager:
                 if display_name:
                     self.db.update_profile_display_name(existing["id"], display_name)
                     existing = self.db.profile_by_id(existing["id"]) or existing
+                    write_profile_nfo(existing, self.settings.download_root / existing["media_dir"] / "tvshow.nfo")
+            if not existing["poster_file"]:
+                await self._save_profile_artwork(existing)
             return self.profile_summary(existing)
         display_name = await self.profile.fetch_profile_name(sec_user_id)
-        return self.profile_summary(self.db.create_profile(sec_user_id, source_url, display_name))
+        created = self.db.create_profile(sec_user_id, source_url, display_name)
+        write_profile_nfo(created, self.settings.download_root / created["media_dir"] / "tvshow.nfo")
+        await self._save_profile_artwork(created)
+        return self.profile_summary(created)
 
     def delete_profile(self, profile_id: str) -> None:
         if not self.db.delete_profile(profile_id):
@@ -140,7 +173,18 @@ class JobManager:
         refresh = self.db.get_refresh(refresh_id)
         if not refresh or refresh["profile_id"] != profile_id:
             raise KeyError(refresh_id)
-        return dict(self.db.apply_refresh(refresh_id, selected_ids))
+        result = dict(self.db.apply_refresh(refresh_id, selected_ids))
+        profile = self.db.profile_by_id(profile_id)
+        if profile:
+            profile_dir = self.settings.download_root / profile["media_dir"]
+            write_profile_nfo(profile, profile_dir / "tvshow.nfo")
+            for row in self.db.list_posts(profile_id, "all"):
+                if row["season_number"] is not None:
+                    season_dir = profile_dir / f"Season {int(row['season_number'])}"
+                    write_season_nfo(profile, int(row["season_number"]), season_dir / "season.nfo")
+                if row["nfo_file"]:
+                    write_episode_nfo(profile, row, self.settings.download_root / row["nfo_file"])
+        return result
 
     def posts(self, profile_id: str, status_filter: str = "all") -> list[dict[str, Any]]:
         if not self.db.profile_by_id(profile_id):
@@ -148,7 +192,8 @@ class JobManager:
         result = []
         for row in self.db.list_posts(profile_id, status_filter):
             item = dict(row)
-            item["file_exists"] = bool(row["download_file"] and (self.settings.download_root / profile_id / row["download_file"]).is_file())
+            media_file = row["media_file"] or row["download_file"]
+            item["file_exists"] = YtdlpService.is_media_file(self.settings.download_root / media_file) if media_file else False
             result.append(item)
         return result
 
@@ -163,8 +208,17 @@ class JobManager:
                 raise ValueError(f"作品不存在：{aweme_id}")
             status = "queued"
             item: dict[str, Any] = {"aweme_id": aweme_id, "video_url": post["video_url"], "title": post["title"], "status": status, "attempt_count": post["attempt_count"]}
-            if post["download_status"] == "downloaded":
+            media_path = self.settings.download_root / (post["media_file"] or post["download_file"] or "")
+            has_downloaded_media = post["download_status"] == "downloaded" and YtdlpService.is_media_file(media_path)
+            if has_downloaded_media:
                 item.update(status="already_downloaded", file_name=post["download_file"], skip_reason_code="already_downloaded", skip_reason_message="该作品已下载")
+            elif post["download_status"] == "downloaded" and post["remote_state"] != "remote_missing":
+                # Keep the database status visible as downloaded+missing in
+                # the UI, but an explicit selection is allowed to repair the
+                # stale record and bypass its old archive entry.
+                self.ytdlp.remove_archive_entry(aweme_id)
+                self.db.update_post(profile_id, aweme_id, download_status="queued", download_file=None, media_file=None, nfo_file=None, downloaded_at=None, media_title_at_download=None)
+                item["status"] = "queued"
             elif post["remote_state"] == "remote_missing":
                 item.update(status="skipped", skip_reason_code="remote_missing", skip_reason_message="作品已不在当前主页")
             elif post["download_status"] == "skipped":
@@ -187,6 +241,43 @@ class JobManager:
                 raise ValueError(f"只能重试失败作品：{aweme_id}")
             self.db.update_post(profile_id, aweme_id, download_status="queued", last_error_code=None, last_error_message=None)
         return await self.create_download(profile_id, aweme_ids, retry_only=True)
+
+    async def create_metadata_refresh(self, profile_id: str, aweme_ids: list[str]) -> str:
+        if not self.db.profile_by_id(profile_id):
+            raise KeyError(profile_id)
+        requested = list(dict.fromkeys(aweme_ids))
+        posts = {row["aweme_id"]: row for row in self.db.list_posts(profile_id, "all")}
+        if requested:
+            missing = [aweme_id for aweme_id in requested if aweme_id not in posts]
+            if missing:
+                raise ValueError(f"作品不存在：{missing[0]}")
+            selected = [posts[aweme_id] for aweme_id in requested]
+        else:
+            selected = [row for row in posts.values() if row["remote_state"] == "active" and row["aweme_type"] in VIDEO_TYPES]
+        if not selected:
+            raise ValueError("没有可刷新的视频作品")
+        job_id = self.db.create_job("metadata", profile_id=profile_id)
+        items = []
+        for post in selected:
+            if post["remote_state"] == "remote_missing":
+                items.append({"aweme_id": post["aweme_id"], "video_url": post["video_url"], "title": post["title"], "status": "skipped", "skip_reason_code": "remote_missing", "skip_reason_message": "作品已不在当前主页"})
+            elif post["aweme_type"] not in VIDEO_TYPES:
+                items.append({"aweme_id": post["aweme_id"], "video_url": post["video_url"], "title": post["title"], "status": "skipped", "skip_reason_code": "unsupported", "skip_reason_message": "非视频作品不支持元数据刷新"})
+            else:
+                items.append({"aweme_id": post["aweme_id"], "video_url": post["video_url"], "title": post["title"], "status": "queued"})
+        self.db.add_job_items(job_id, items)
+        await self.queue.put(job_id)
+        return job_id
+
+    async def retry_metadata(self, profile_id: str, aweme_ids: list[str]) -> str:
+        posts = {row["aweme_id"]: row for row in self.db.list_posts(profile_id, "all")}
+        selected = []
+        for aweme_id in dict.fromkeys(aweme_ids):
+            post = posts.get(aweme_id)
+            if not post or not post["metadata_error_code"]:
+                raise ValueError(f"只能重试元数据失败作品：{aweme_id}")
+            selected.append(aweme_id)
+        return await self.create_metadata_refresh(profile_id, selected)
 
     def cancel(self, job_id: str) -> None:
         if not self.db.get_job(job_id):
@@ -247,15 +338,29 @@ class JobManager:
         row = self.db.get_job(job_id)
         if not row:
             raise KeyError(job_id)
-        profile_dir = row["profile_id"] or "single"
+        profile = self.db.profile_by_id(row["profile_id"]) if row["profile_id"] else None
+        profile_dir = profile["media_dir"] if profile else "single"
         directory = self.settings.download_root / profile_dir
         result = []
         if not directory.is_dir():
             return result
-        for path in sorted(directory.iterdir()):
-            if path.is_file() and not path.name.endswith((".part", ".ytdl")):
-                result.append({"file_id": f"{profile_dir}/{path.name}", "name": path.name, "size": path.stat().st_size, "download_url": f"/api/jobs/{job_id}/files/{profile_dir}/{path.name}"})
+        for path in sorted(directory.rglob("*")):
+            if path.is_file() and not path.name.endswith((".part", ".ytdl", ".nfo")) and path.suffix.lower() not in {".jpg", ".jpeg", ".png", ".webp", ".gif"}:
+                relative = path.relative_to(self.settings.download_root)
+                file_id = str(relative)
+                result.append({"file_id": file_id, "name": path.name, "size": path.stat().st_size, "download_url": f"/api/jobs/{job_id}/files/{file_id}"})
         return result
+
+    def profile_file(self, profile_id: str, file_id: str) -> tuple[Path, str]:
+        profile = self.db.profile_by_id(profile_id)
+        if not profile:
+            raise KeyError(profile_id)
+        root = self.settings.download_root.resolve()
+        base = (root / profile["media_dir"]).resolve()
+        path = (root / file_id).resolve()
+        if base not in path.parents or not path.is_file() or path.name.endswith((".part", ".ytdl")):
+            raise FileNotFoundError(file_id)
+        return path, path.name
 
     async def _worker(self) -> None:
         while True:
@@ -272,6 +377,8 @@ class JobManager:
         try:
             if row["kind"] == "refresh":
                 await self._run_refresh(job_id, row)
+            elif row["kind"] == "metadata":
+                await self._run_metadata(job_id, row)
             else:
                 await self._run_download(job_id, row)
         except asyncio.CancelledError:
@@ -331,10 +438,85 @@ class JobManager:
                         counts["missing"] += 1
                         refresh_items.append({"aweme_id": aweme_id, "title": old["title"], "upload_date": old["upload_date"], "aweme_type": old["aweme_type"], "video_url": old["video_url"], "change_type": "remote_missing", "skip_reason": "作品已不在当前主页"})
             self.db.add_refresh_items(refresh_id, refresh_items)
+            current_profile = self.db.profile_by_id(job["profile_id"])
+            if current_profile:
+                write_profile_nfo(current_profile, self.settings.download_root / current_profile["media_dir"] / "tvshow.nfo")
             self.db.complete_refresh(refresh_id, counts, status="pending_confirmation")
             self.db.update_job(job_id, status="pending_confirmation", phase="confirmation", current_item=None)
         except Exception:
             raise
+
+    def _store_metadata(self, profile_id: str, aweme_id: str, metadata: dict[str, Any] | None) -> None:
+        # Keep the worker resilient if an extractor returns no info object.
+        # Discovery metadata remains authoritative for fields yt-dlp could
+        # not provide in this pass.
+        if not isinstance(metadata, dict):
+            metadata = {}
+        post = self.db.get_post(profile_id, aweme_id)
+        profile = self.db.profile_by_id(profile_id)
+        if not post or not profile:
+            raise ValueError("主页作品记录不存在")
+        fields = {
+            key: metadata.get(key)
+            for key in (
+                "description", "timestamp", "channel", "channel_id", "channel_url", "uploader", "uploader_id", "uploader_url",
+                "duration", "view_count", "like_count", "comment_count", "repost_count", "save_count",
+                "format_id", "width", "height", "fps", "vcodec", "acodec", "filesize",
+                "container_ext", "track", "artists_json", "album", "availability",
+            )
+            if metadata.get(key) is not None
+        }
+        if metadata.get("title"):
+            fields["title"] = metadata["title"]
+        if metadata.get("upload_date"):
+            fields["upload_date"] = metadata["upload_date"]
+            fields["aired_date"] = metadata["upload_date"]
+        fields["metadata_updated_at"] = utc_now()
+        fields["metadata_error_code"] = None
+        fields["metadata_error_message"] = None
+        if metadata.get("channel") and metadata["channel"] != profile["display_name"]:
+            self.db.update_profile_display_name(profile_id, str(metadata["channel"]))
+            profile = self.db.profile_by_id(profile_id) or profile
+            write_profile_nfo(profile, self.settings.download_root / profile["media_dir"] / "tvshow.nfo")
+        self.db.update_post(profile_id, aweme_id, **fields)
+        post = self.db.get_post(profile_id, aweme_id)
+        assert post is not None
+        profile_dir = self.settings.download_root / profile["media_dir"]
+        season_dir = profile_dir / f"Season {int(post['season_number'] or 0)}"
+        season_dir.mkdir(parents=True, exist_ok=True)
+        write_season_nfo(profile, int(post["season_number"] or 0), season_dir / "season.nfo")
+        thumb_file = post["thumbnail_file"]
+        artwork_error = None
+        thumbnail_urls = metadata.get("thumbnail_urls") or ([metadata["thumbnail_url"]] if metadata.get("thumbnail_url") else [])
+        if thumbnail_urls:
+            if thumb_file:
+                destination = self.settings.download_root / thumb_file
+            elif post["media_file"]:
+                media_path = Path(post["media_file"])
+                destination = self.settings.download_root / media_path.parent / f"{media_path.stem}-thumb"
+            else:
+                destination = season_dir / f"{aweme_id}-thumb"
+            image, digest = download_image(thumbnail_urls, destination, {"User-Agent": self.settings.user_agent, "Referer": "https://www.douyin.com/"}, self.settings.request_timeout)
+            if image:
+                thumb_file = str(image.relative_to(self.settings.download_root))
+                self.db.update_post(profile_id, aweme_id, thumbnail_file=thumb_file, thumbnail_source_hash=digest, artwork_error_code=None, artwork_error_message=None)
+            else:
+                artwork_error = digest
+        elif not thumb_file:
+            artwork_error = None
+        if artwork_error:
+            self.db.update_post(profile_id, aweme_id, artwork_error_code=artwork_error, artwork_error_message="无法下载视频封面")
+        post = self.db.get_post(profile_id, aweme_id)
+        assert post is not None
+        nfo_file = post["nfo_file"]
+        if post["media_file"]:
+            if not nfo_file:
+                nfo_file = str((self.settings.download_root / post["media_file"]).with_suffix(".nfo").relative_to(self.settings.download_root))
+                self.db.update_post(profile_id, aweme_id, nfo_file=nfo_file)
+                post = self.db.get_post(profile_id, aweme_id)
+            if post:
+                write_episode_nfo(profile, post, self.settings.download_root / nfo_file)
+        self.db.update_profile_metadata(profile_id, metadata_updated_at=utc_now(), metadata_error_code=None, metadata_error_message=None)
 
     async def _run_download(self, job_id: str, job: Any) -> None:
         self.db.update_job(job_id, status="downloading", phase="download")
@@ -377,19 +559,91 @@ class JobManager:
                 self.db.update_job_item(job_id, item["aweme_id"], error_code=_error_code(safe), error_message=safe)
 
             try:
-                output_dir = self.settings.download_root / (profile_id or "single")
-                path = await asyncio.to_thread(self.ytdlp.download_one, post["video_url"], output_dir, item["aweme_id"], post["title"], progress, message)
+                if profile_id:
+                    profile = self.db.profile_by_id(profile_id)
+                    if not profile:
+                        raise RuntimeError("主页记录不存在")
+                    season = int(post["season_number"] or 0)
+                    episode = int(post["episode_number"] or 1)
+                    output_dir = self.settings.download_root / profile["media_dir"] / f"Season {season}"
+                    prefix = f"S{season:04d}E{episode:04d} - "
+                else:
+                    output_dir = single_media_dir(self.settings.download_root, item["aweme_id"])
+                    prefix = ""
+                path, metadata = await asyncio.to_thread(self.ytdlp.download_one, post["video_url"], output_dir, item["aweme_id"], prefix, progress, message)
                 if not path:
                     raise RuntimeError("下载完成但未找到输出文件")
+                if not isinstance(metadata, dict):
+                    metadata = {"id": str(item["aweme_id"])}
                 self.db.update_job_item(job_id, item["aweme_id"], status="downloaded", percent=100, file_name=path.name)
                 if profile_id:
-                    self.db.update_post(profile_id, item["aweme_id"], download_status="downloaded", download_file=path.name, downloaded_at=datetime.now(timezone.utc).isoformat(), last_error_code=None, last_error_message=None)
+                    media_file = str(path.relative_to(self.settings.download_root))
+                    self.db.update_post(profile_id, item["aweme_id"], download_status="downloaded", download_file=path.name, media_file=media_file, media_title_at_download=metadata.get("title") or post["title"], downloaded_at=datetime.now(timezone.utc).isoformat(), last_error_code=None, last_error_message=None)
+                    self._store_metadata(profile_id, item["aweme_id"], metadata)
+                else:
+                    thumbnail_file = None
+                    thumbnail_urls = metadata.get("thumbnail_urls") or ([metadata["thumbnail_url"]] if metadata.get("thumbnail_url") else [])
+                    if thumbnail_urls:
+                        image, _ = await asyncio.to_thread(
+                            download_image,
+                            thumbnail_urls,
+                            path.with_name(f"{path.stem}-thumb"),
+                            {"User-Agent": self.settings.user_agent, "Referer": "https://www.douyin.com/"},
+                            self.settings.request_timeout,
+                        )
+                        if image:
+                            thumbnail_file = str(image)
+                    single_post = {
+                        "title": metadata.get("title") or item["title"] or item["aweme_id"],
+                        "description": metadata.get("description"),
+                        "upload_date": metadata.get("upload_date"),
+                        "duration": metadata.get("duration"),
+                        "aweme_id": item["aweme_id"],
+                        "thumbnail_file": thumbnail_file,
+                        "video_url": post["video_url"],
+                    }
+                    write_movie_nfo(single_post, path.with_name("movie.nfo"))
             except Exception as exc:
                 safe = _safe_error(str(exc))
                 code = _error_code(safe)
                 self.db.update_job_item(job_id, item["aweme_id"], status="failed", error_code=code, error_message=safe)
                 if profile_id:
                     self.db.update_post(profile_id, item["aweme_id"], download_status="failed", last_error_code=code, last_error_message=safe)
+        final = self.db.get_job(job_id)
+        if final and final["cancel_requested"]:
+            self.db.update_job(job_id, status="cancelled", phase="cancelled", current_item=None)
+        else:
+            self.db.update_job(job_id, status="completed_with_errors" if self.db.get_job(job_id)["failed"] else "completed", phase="complete", current_item=None)
+
+    async def _run_metadata(self, job_id: str, job: Any) -> None:
+        self.db.update_job(job_id, status="processing", phase="metadata")
+        for item in self.db.list_job_items(job_id):
+            if item["status"] != "queued":
+                continue
+            if self.db.cancel_requested(job_id):
+                self.db.update_job(job_id, status="cancelled", phase="cancelled", current_item=None)
+                return
+            profile_id = job["profile_id"]
+            post = self.db.get_post(profile_id, item["aweme_id"])
+            if not post:
+                self.db.update_job_item(job_id, item["aweme_id"], status="failed", error_code="not_found", error_message="主页作品记录不存在")
+                continue
+            self.db.update_job_item(job_id, item["aweme_id"], status="processing")
+            self.db.update_job(job_id, current_item={"aweme_id": item["aweme_id"], "title": post["title"], "status": "processing", "percent": 0})
+
+            def message(value: str) -> None:
+                safe = _safe_error(value)
+                self.db.update_job_item(job_id, item["aweme_id"], error_code=_error_code(safe), error_message=safe)
+
+            try:
+                metadata = await asyncio.to_thread(self.ytdlp.extract_metadata, post["video_url"], message)
+                self._store_metadata(profile_id, item["aweme_id"], metadata)
+                self.db.update_job_item(job_id, item["aweme_id"], status="updated", percent=100)
+            except Exception as exc:
+                safe = _safe_error(str(exc))
+                code = _error_code(safe)
+                self.db.update_job_item(job_id, item["aweme_id"], status="failed", error_code=code, error_message=safe)
+                self.db.update_post(profile_id, item["aweme_id"], metadata_error_code=code, metadata_error_message=safe)
         final = self.db.get_job(job_id)
         if final and final["cancel_requested"]:
             self.db.update_job(job_id, status="cancelled", phase="cancelled", current_item=None)

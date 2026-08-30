@@ -14,7 +14,7 @@
 - 抖音用户主页列表由 `backend/app/profile_service.py` 独立枚举，视频详情和下载由 `backend/app/ytdlp_service.py` 调用本地 yt-dlp Python API 完成；不要把主页分页逻辑硬塞进上游 `DouyinIE`。
 - 任务状态由 SQLite 保存，并由单个串行 worker 执行；长任务必须通过任务状态接口和 SSE/状态流反馈，不要在 HTTP 请求线程中同步阻塞整批下载。
 - 远程部署使用服务器挂载的 Netscape/Mozilla Cookie 文件（`DOUYIN_COOKIE_FILE`）；API 请求和前端表单不得接收或回显原始 Cookie。
-- `docker-compose.yml` 必须是可独立使用的部署配置，不依赖项目 `.env` 插值；环境变量、镜像版本和 Cookie 文件路径直接写在 Compose 文件中，敏感占位值只能由部署者在本地替换，不能提交真实凭据。
+- `docker-compose.yml` 必须是可独立使用的部署配置，不要求项目 `.env` 文件；应用环境变量和 Cookie 文件路径直接写在 Compose 文件中，敏感占位值只能由部署者在本地替换，不能提交真实凭据。镜像默认使用 `ghcr.io/yetianxingshi/douyin-ytdlp-web:latest`，仅允许通过 shell 环境变量 `IMAGE_REPOSITORY`、`IMAGE_TAG` 可选覆盖仓库和标签，不能把旧版本号固化在 Compose 中。
 - Python 依赖和运行环境统一由 `backend/pyproject.toml` 与 `uv` 管理；必须使用 `uv sync --project backend` 创建或更新 `backend/.venv`，使用 `uv run --project backend` 运行服务，禁止依赖系统 Python 或全局 pip 环境；不要恢复独立的 pip `requirements.txt` 作为安装入口。锁定文件 `backend/uv.lock` 如已生成应纳入版本控制。
 - 本地服务由根目录 `start.sh`、`stop.sh`、`restart.sh` 管理；三个脚本必须同时管理 FastAPI 后端和 React/Vite 前端。后端依赖使用 uv 隔离环境，前端依赖使用 `frontend/package-lock.json` 配合 npm 安装；PID、日志和 uv 缓存只写入 `state/`，脚本不得把 Cookie 或其他 secret 打印到终端或日志。`.env`（或 `ENV_FILE` 指定的文件）通过 uv 的 dotenv 解析器加载，不要用 shell `source` 解析配置。
 - `.env` 中包含空格、括号或分号的值（尤其是浏览器 User-Agent）必须使用双引号；环境文件解析失败时不得假定配置已生效，应先验证实际读取到的绝对路径。
@@ -34,8 +34,16 @@
 - 后台任务删除属于已确认的管理员操作，不增加二次确认弹窗；主页管理记录删除仍保留确认提示。
 - 删除带主页刷新的终态任务时，同时删除对应的待确认刷新快照，避免留下阻塞下一次更新的孤立记录；不删除主页作品记录或已完成视频文件。
 - 任务管理列表的计数必须与 worker 的中间状态同步，主页枚举期间至少持续更新已发现数量。
-- 下载完成文件使用 `DOWNLOAD_ROOT/<sec_user_id>/<标题>_<发布日期>_<aweme_id>.<ext>`，单视频使用 `DOWNLOAD_ROOT/single/`；标题变化只更新元数据，不自动重命名已经下载的文件。`DOWNLOAD_ROOT`、数据库和归档路径必须支持环境变量配置。
+- 下载完成文件使用 Jellyfin 目录规则 `DOWNLOAD_ROOT/profiles/<sec_user_id>/Season <年份>/SxxxxExxxx - <标题> [<aweme_id>].<ext>`，单视频使用 `DOWNLOAD_ROOT/single/<aweme_id>/`；标题变化只更新元数据，不自动重命名已经下载的文件。`DOWNLOAD_ROOT`、数据库和归档路径必须支持环境变量配置。
+- Jellyfin 媒体目录使用 `DOWNLOAD_ROOT/profiles/<sec_user_id>/Season <年份>/`；博主目录只使用稳定的 `sec_user_id`，昵称变化不得触发目录重命名。视频首次应用时分配稳定的 Season/Episode 编号，后续刷新不得重新编号。
+- 每个主页目录必须生成 `tvshow.nfo`，每个 Season 生成 `season.nfo`，每个已下载视频生成同名 Episode `.nfo` 和本地 `-thumb` 封面；单视频保存到 `DOWNLOAD_ROOT/single/<aweme_id>/` 并生成 `movie.nfo`。
+- NFO 必须使用 UTF-8、XML 转义和原子替换；标题变化只更新 NFO，不改已经下载的媒体文件名。NFO 和数据库可以保存互动统计快照，但不得保存 `formats[].url`、临时视频直链、Cookie 或完整请求头。
+- 前端展示受保护的视频、NFO 或封面文件时，不能把需要 Bearer Token 的文件接口直接放进 `<img src>` 或普通链接；必须使用带认证头的 `fetch` 获取内容（例如对象 URL），并继续让后端文件接口执行管理员鉴权。
+- 文件接口应根据实际扩展名返回正确的 MIME 类型，确保前端通过认证下载的本地封面可以正常预览；未知类型才回退为 `application/octet-stream`。
+- 互动统计刷新采用手动元数据任务，不在主页分页更新时默认逐条调用 yt-dlp 详情接口；元数据失败不能把视频下载状态改成失败，且必须保留可重试的错误分类。
+- Jellyfin 媒体索引 schema 不提供旧数据库迁移；检测到旧 `jobs.sqlite3` 时必须明确提示备份并删除旧 state，不能静默把旧记录当成新结构使用。
 - 下载文件、SQLite 状态、归档文件和 Cookie secret 都是运行时数据，必须保持在版本控制之外；参考仓库只提供算法和接口实现参考，不复制其中的硬编码 Cookie 配置。
+- 下载完成判定只能接受实际视频媒体文件（如 `.mp4`、`.mkv`、`.webm`、`.mov`、`.m4v`、`.avi`、`.flv`、`.ts`），必须排除 `-thumb` 封面和 `.nfo`；不能因为文件名包含 aweme_id 就把封面误判为视频。数据库标记已下载但实际媒体缺失时，列表应显示缺失警告，管理员明确重新选择后才可清理对应归档记录并重试。
 
 ## 范围与源码基准
 
@@ -45,6 +53,7 @@
 - A-Bogus 仅从 `backend/app/vendor/abogus.py` 加载；该第三方代码必须保留作者、来源和 GPLv3 许可证说明，不能重新改为运行时读取外部仓库。
 - 不要仅凭记忆、旧版本经验或第三方文章声称某项能力存在。若已安装的 yt-dlp 包没有对应提取器或 URL 规则，应明确说明“不支持直接处理”，不要把推测写成结论。
 - 本地已安装的 `yt-dlp` CLI 可用于辅助核验；CLI、PyPI 包和官方文档结论不一致时，分别说明版本和依据，不要混淆。
+- yt-dlp 的 `extract_info(download=True)` 在下载归档命中等场景可能返回 `None`，`requested_formats` 也可能包含空项；调用方必须先做类型归一化，不能直接对不确定值调用 `.get()`。只要输出文件已成功落盘，就不能仅因缺少详情字典而把下载判定为失败；应保留已有主页发现元数据，并向用户显示可理解的元数据缺失提示。
 
 ## 测试与验证
 

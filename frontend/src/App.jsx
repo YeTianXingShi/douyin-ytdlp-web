@@ -49,10 +49,12 @@ export default function App() {
   const [selectedRefreshItems, setSelectedRefreshItems] = useState([])
   const [job, setJob] = useState(null)
   const [jobs, setJobs] = useState([])
+  const [thumbnailUrls, setThumbnailUrls] = useState({})
   const [error, setError] = useState('')
 
   const visiblePosts = useMemo(() => posts, [posts])
   const selectedFailed = selectedPosts.filter(id => posts.find(post => post.aweme_id === id)?.download_status === 'failed')
+  const selectedMetadataFailed = selectedPosts.filter(id => posts.find(post => post.aweme_id === id)?.metadata_error_code)
 
   async function loadProfiles() {
     if (!token) return
@@ -151,6 +153,24 @@ export default function App() {
     } catch (err) { setError(err.message) }
   }
 
+  async function refreshMetadata(ids = selectedPosts) {
+    if (!profile) return
+    try {
+      const created = await api(`/api/profiles/${profile.id}/metadata-refresh`, { method: 'POST', body: JSON.stringify({ aweme_ids: ids }) })
+      setJob({ job_id: created.job_id, status: created.status })
+      setSelectedPosts([])
+    } catch (err) { setError(err.message) }
+  }
+
+  async function retryMetadata() {
+    if (!profile || selectedMetadataFailed.length === 0) return
+    try {
+      const created = await api(`/api/profiles/${profile.id}/metadata-refresh/retry`, { method: 'POST', body: JSON.stringify({ aweme_ids: selectedMetadataFailed }) })
+      setJob({ job_id: created.job_id, status: created.status })
+      setSelectedPosts([])
+    } catch (err) { setError(err.message) }
+  }
+
   async function cancelJob() {
     if (!job?.job_id) return
     try { await api(`/api/jobs/${job.job_id}/cancel`, { method: 'POST' }) } catch (err) { setError(err.message) }
@@ -169,6 +189,34 @@ export default function App() {
     if (!profile) return
     api(`/api/profiles/${profile.id}/posts?status=${filter}`).then(setPosts).catch(err => setError(err.message))
   }, [profile?.id, filter])
+
+  useEffect(() => {
+    if (!profile?.id || !token) {
+      setThumbnailUrls({})
+      return undefined
+    }
+    let stopped = false
+    const objectUrls = []
+    async function loadThumbnails() {
+      const entries = await Promise.all(posts.filter(post => post.thumbnail_file).map(async post => {
+        try {
+          const response = await fetch(`/api/profiles/${profile.id}/files/${post.thumbnail_file}`, { headers: authHeaders() })
+          if (!response.ok) return [post.aweme_id, null]
+          const objectUrl = URL.createObjectURL(await response.blob())
+          objectUrls.push(objectUrl)
+          return [post.aweme_id, objectUrl]
+        } catch {
+          return [post.aweme_id, null]
+        }
+      }))
+      if (!stopped) setThumbnailUrls(Object.fromEntries(entries.filter(([, url]) => url)))
+    }
+    loadThumbnails()
+    return () => {
+      stopped = true
+      objectUrls.forEach(objectUrl => URL.revokeObjectURL(objectUrl))
+    }
+  }, [profile?.id, posts, token])
 
   useEffect(() => {
     if (!refresh?.id || !profile) return undefined
@@ -231,7 +279,7 @@ export default function App() {
     <section className="card auth"><label>管理员 Token<input type="password" value={token} onChange={event => saveToken(event.target.value)} placeholder="Bearer token" /></label></section>
     {error && <section className="error">{error}</section>}
     <nav className="card nav-tabs"><button className={page === 'profiles' ? 'active' : ''} onClick={() => setPage('profiles')}>主页作品管理</button><button className={page === 'tasks' ? 'active' : ''} onClick={() => setPage('tasks')}>后台任务管理</button></nav>
-    {page === 'tasks' ? <section className="card task-admin"><div className="toolbar"><div><h2>后台任务</h2><small>进行中的任务每秒刷新；停止只会在当前作品完成或失败后生效。</small></div><button className="secondary" onClick={loadJobs}>立即刷新</button></div><div className="table-wrap"><table><thead><tr><th>任务</th><th>来源</th><th>状态</th><th>进度</th><th>当前项目</th><th>创建 / 更新</th><th>操作</th></tr></thead><tbody>{jobs.map(item => { const running = ['queued', 'enumerating', 'downloading'].includes(item.status); const label = item.kind === 'refresh' ? '主页更新' : '视频下载'; const source = item.display_name || item.sec_user_id || '单视频'; return <tr key={item.job_id}><td><strong>{label}</strong><small>{item.job_id}</small></td><td>{source}</td><td><span className={`status status-${item.status}`}>{item.status}</span>{item.error && <small>{item.error}</small>}</td><td>发现 {item.discovered} · 完成 {item.completed} · 跳过 {item.skipped} · 失败 {item.failed}</td><td>{item.current_item ? <>{item.current_item.title || item.current_item.aweme_id}<small>{item.current_item.percent ?? 0}% {item.current_item.speed || ''} {item.current_item.eta ? `ETA ${item.current_item.eta}` : ''}</small></> : '—'}</td><td>{formatDate(item.created_at)}<small>{formatDate(item.updated_at)}</small></td><td><button className="secondary" onClick={() => running ? cancelManagedJob(item.job_id) : deleteManagedJob(item)}>{running ? '停止' : '删除'}</button></td></tr> })}</tbody></table></div>{jobs.length === 0 && <p className="empty">暂无后台任务</p>}</section> : <>
+    {page === 'tasks' ? <section className="card task-admin"><div className="toolbar"><div><h2>后台任务</h2><small>进行中的任务每秒刷新；停止只会在当前作品完成或失败后生效。</small></div><button className="secondary" onClick={loadJobs}>立即刷新</button></div><div className="table-wrap"><table><thead><tr><th>任务</th><th>来源</th><th>状态</th><th>进度</th><th>当前项目</th><th>创建 / 更新</th><th>操作</th></tr></thead><tbody>{jobs.map(item => { const running = ['queued', 'enumerating', 'downloading', 'processing'].includes(item.status); const label = item.kind === 'refresh' ? '主页更新' : item.kind === 'metadata' ? '元数据刷新' : '视频下载'; const source = item.display_name || item.sec_user_id || '单视频'; return <tr key={item.job_id}><td><strong>{label}</strong><small>{item.job_id}</small></td><td>{source}</td><td><span className={`status status-${item.status}`}>{item.status}</span>{item.error && <small>{item.error}</small>}</td><td>发现 {item.discovered} · 完成 {item.completed} · 跳过 {item.skipped} · 失败 {item.failed}</td><td>{item.current_item ? <>{item.current_item.title || item.current_item.aweme_id}<small>{item.current_item.percent ?? 0}% {item.current_item.speed || ''} {item.current_item.eta ? `ETA ${item.current_item.eta}` : ''}</small></> : '—'}</td><td>{formatDate(item.created_at)}<small>{formatDate(item.updated_at)}</small></td><td><button className="secondary" onClick={() => running ? cancelManagedJob(item.job_id) : deleteManagedJob(item)}>{running ? '停止' : '删除'}</button></td></tr> })}</tbody></table></div>{jobs.length === 0 && <p className="empty">暂无后台任务</p>}</section> : <>
     <section className="card">
       <h2>我的主页</h2>
       <div className="inline-form"><input value={profileUrl} onChange={event => setProfileUrl(event.target.value)} placeholder="https://www.douyin.com/user/..." /><button onClick={addProfile} disabled={!profileUrl || !token}>添加主页</button></div>
@@ -240,7 +288,7 @@ export default function App() {
     {profile && <>
       <section className="card toolbar"><div><h2>{profile.display_name || profile.sec_user_id}</h2><small>{profile.profile_url}</small></div><label className="refresh-range">更新范围<select value={refreshTimeRange} onChange={event => setRefreshTimeRange(event.target.value)} disabled={refresh && ['queued', 'enumerating', 'pending_confirmation'].includes(refresh.status)}>{refreshTimeRanges.map(([key, label]) => <option key={key} value={key}>{label}</option>)}</select></label><button onClick={refreshProfile} disabled={refresh && ['queued', 'enumerating', 'pending_confirmation'].includes(refresh.status)}>{refresh?.status === 'pending_confirmation' ? '有待确认更新' : '更新主页'}</button><button className="secondary" onClick={() => { if (window.confirm('只删除主页管理记录，不删除视频文件，确定吗？')) api(`/api/profiles/${profile.id}`, { method: 'DELETE' }).then(() => { setProfile(null); loadProfiles() }).catch(err => setError(err.message)) }}>删除管理记录</button></section>
       {refresh && <section className="card"><div className="toolbar"><h2>更新发现结果</h2><span className="badge">{refresh.status}</span></div><p>范围：{refreshRangeLabel(refresh.time_range)}；发现 {refresh.discovered_count}，新增 {refresh.new_count}，变化 {refresh.changed_count}，消失 {refresh.missing_count}，跳过 {refresh.skipped_count}</p>{refresh.status === 'pending_confirmation' && <><div className="actions"><button onClick={() => setSelectedRefreshItems(refreshItems.filter(item => ['new', 'metadata_changed'].includes(item.change_type) && !['image', 'unknown', 'remote_missing'].includes(item.change_type)).map(item => item.aweme_id))}>全选可下载</button><button className="secondary" onClick={applyRefresh}>确认选中更新（{selectedRefreshItems.length}）</button></div><div className="table-wrap"><table><thead><tr><th>选</th><th>作品</th><th>日期</th><th>变化</th><th>原因</th></tr></thead><tbody>{refreshItems.map(item => <tr key={item.aweme_id}><td><input type="checkbox" checked={selectedRefreshItems.includes(item.aweme_id)} onChange={() => toggle(setSelectedRefreshItems, item.aweme_id)} /></td><td>{item.title || item.aweme_id}<small>{item.aweme_id}</small></td><td>{formatDate(item.upload_date)}</td><td>{item.change_type}</td><td>{item.skip_reason || '—'}</td></tr>)}</tbody></table></div></>}</section>}
-      <section className="card"><div className="toolbar"><div><h2>作品清单</h2><small>已下载状态以应用数据库为准</small></div><select value={filter} onChange={event => setFilter(event.target.value)}><option value="all">全部</option><option value="not_downloaded">未下载</option><option value="downloaded">已下载</option><option value="failed">失败</option><option value="skipped">跳过</option><option value="remote_missing">远端已消失</option></select></div><div className="actions"><button onClick={downloadSelected} disabled={!selectedPosts.length}>下载选中（{selectedPosts.length}）</button><button className="secondary" onClick={retrySelected} disabled={!selectedFailed.length}>重试失败（{selectedFailed.length}）</button><button className="secondary" onClick={() => setSelectedPosts(visiblePosts.map(post => post.aweme_id))}>全选当前</button></div><div className="table-wrap"><table><thead><tr><th>选</th><th>标题 / ID</th><th>日期</th><th>状态</th><th>文件</th><th>错误 / 跳过原因</th><th>尝试</th></tr></thead><tbody>{visiblePosts.map(post => <tr key={post.aweme_id}><td><input type="checkbox" checked={selectedPosts.includes(post.aweme_id)} onChange={() => toggle(setSelectedPosts, post.aweme_id)} /></td><td>{post.title || '无标题'}<small>{post.aweme_id}</small></td><td>{formatDate(post.upload_date)}</td><td><span className={`status status-${post.download_status}`}>{post.remote_state === 'remote_missing' ? 'remote_missing' : post.download_status}{post.download_status === 'downloaded' && !post.file_exists ? '（文件缺失）' : ''}</span></td><td>{post.download_file || '—'}</td><td>{post.last_error_message || post.skip_reason_message || '—'}</td><td>{post.attempt_count}</td></tr>)}</tbody></table></div></section>
+      <section className="card"><div className="toolbar"><div><h2>作品清单</h2><small>已下载状态以应用数据库为准；互动数据需要手动刷新</small></div><select value={filter} onChange={event => setFilter(event.target.value)}><option value="all">全部</option><option value="not_downloaded">未下载</option><option value="downloaded">已下载</option><option value="failed">失败</option><option value="skipped">跳过</option><option value="remote_missing">远端已消失</option></select></div><div className="actions"><button onClick={downloadSelected} disabled={!selectedPosts.length}>下载选中（{selectedPosts.length}）</button><button className="secondary" onClick={retrySelected} disabled={!selectedFailed.length}>重试失败（{selectedFailed.length}）</button><button className="secondary" onClick={() => refreshMetadata()} disabled={Boolean(selectedPosts.length)}>刷新全部元数据</button><button className="secondary" onClick={() => refreshMetadata(selectedPosts)} disabled={!selectedPosts.length}>刷新选中元数据</button><button className="secondary" onClick={retryMetadata} disabled={!selectedMetadataFailed.length}>重试元数据失败（{selectedMetadataFailed.length}）</button><button className="secondary" onClick={() => setSelectedPosts(visiblePosts.map(post => post.aweme_id))}>全选当前</button></div><div className="table-wrap"><table><thead><tr><th>选</th><th>标题 / ID</th><th>日期 / 时长</th><th>状态</th><th>互动统计</th><th>媒体 / NFO</th><th>错误 / 跳过原因</th><th>尝试</th></tr></thead><tbody>{visiblePosts.map(post => <tr key={post.aweme_id}><td><input type="checkbox" checked={selectedPosts.includes(post.aweme_id)} onChange={() => toggle(setSelectedPosts, post.aweme_id)} /></td><td>{post.thumbnail_file && thumbnailUrls[post.aweme_id] && <img className="post-thumb" src={thumbnailUrls[post.aweme_id]} alt="" />}<strong>{post.title || '无标题'}</strong><small>{post.aweme_id}</small><small>{post.channel || profile.display_name || '—'}</small></td><td>{formatDate(post.upload_date)}<small>{post.duration ? `${Math.round(post.duration)} 秒` : '—'}</small></td><td><span className={`status status-${post.download_status}`}>{post.remote_state === 'remote_missing' ? 'remote_missing' : post.download_status}{post.download_status === 'downloaded' && !post.file_exists ? '（文件缺失）' : ''}</span><small>{post.season_number != null ? `S${String(post.season_number).padStart(4, '0')}E${String(post.episode_number || 0).padStart(4, '0')}` : '—'}</small></td><td>播放 {post.view_count ?? '—'}<small>赞 {post.like_count ?? '—'} · 评 {post.comment_count ?? '—'}</small><small>分享 {post.repost_count ?? '—'} · 藏 {post.save_count ?? '—'}</small></td><td>{post.media_file || post.download_file || '—'}<small>{post.nfo_file ? `NFO：${post.nfo_file}` : '尚未生成 NFO'}</small></td><td>{post.metadata_error_message || post.artwork_error_message || post.last_error_message || post.skip_reason_message || '—'}</td><td>{post.attempt_count}</td></tr>)}</tbody></table></div></section>
       {job && <section className="card"><div className="toolbar"><h2>当前任务</h2><button className="secondary" onClick={cancelJob} disabled={['completed', 'completed_with_errors', 'failed', 'cancelled'].includes(job.status)}>取消</button></div><div className="stats"><span>状态：{job.status}</span><span>完成：{job.completed}</span><span>跳过：{job.skipped}</span><span>失败：{job.failed}</span></div>{job.current_item && <div className="current"><strong>{job.current_item.title || job.current_item.aweme_id}</strong><progress max="100" value={Number(job.current_item.percent || 0)} /><small>{job.current_item.percent || 0}% {job.current_item.speed || ''} {job.current_item.eta ? `ETA ${job.current_item.eta}` : ''}</small></div>}</section>}
     </>}
     </>}

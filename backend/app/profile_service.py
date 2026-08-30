@@ -161,6 +161,46 @@ class ProfileService:
 
         return find_name(payload)
 
+    async def fetch_profile_artwork(self, sec_user_id: str) -> list[str]:
+        """Best-effort profile avatar/cover lookup; URLs are only used immediately."""
+        try:
+            cookie_header = self.cookies.cookie_header()
+            headers = {
+                "Accept": "application/json, text/plain, */*",
+                "Cookie": cookie_header,
+                "Referer": f"https://www.douyin.com/user/{sec_user_id}",
+                "User-Agent": self.settings.user_agent,
+            }
+            params = self._params(sec_user_id, 0)
+            params.pop("max_cursor", None)
+            params.pop("count", None)
+            params["a_bogus"] = make_a_bogus(params)
+            async with httpx.AsyncClient(timeout=self.settings.request_timeout, proxy=self.settings.proxy, headers=headers) as client:
+                response = await client.get(self.profile_endpoint, params=params)
+                response.raise_for_status()
+                payload = response.json()
+        except (httpx.HTTPError, ValueError, RuntimeError):
+            return []
+        found: list[str] = []
+
+        def visit(value: object) -> None:
+            if isinstance(value, dict):
+                for key in ("avatar_larger", "avatar_medium", "avatar_thumb", "avatar", "cover_url", "cover"):
+                    candidate = value.get(key)
+                    if isinstance(candidate, str) and candidate.startswith(("http://", "https://")):
+                        found.append(candidate)
+                    elif isinstance(candidate, dict):
+                        visit(candidate)
+                    elif isinstance(candidate, list):
+                        visit(candidate)
+                for nested in value.values():
+                    visit(nested)
+            elif isinstance(value, list):
+                for nested in value:
+                    visit(nested)
+        visit(payload)
+        return list(dict.fromkeys(found))
+
     async def iter_posts(self, source_url: str, max_items: int = 0, time_range: str = "all") -> AsyncIterator[DouyinPost]:
         if time_range not in TIME_RANGE_DAYS:
             raise ValueError(f"Unsupported profile refresh time range: {time_range}")

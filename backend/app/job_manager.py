@@ -322,10 +322,14 @@ class JobManager:
                 else:
                     change_type, reason = "unchanged", None
                 refresh_items.append({"aweme_id": post.aweme_id, "title": post.title, "upload_date": post.upload_date, "aweme_type": post.aweme_type, "video_url": f"https://www.douyin.com/video/{post.aweme_id}", "change_type": change_type, "skip_reason": reason})
-            for aweme_id, old in existing.items():
-                if old["remote_state"] == "active" and aweme_id not in discovered_ids:
-                    counts["missing"] += 1
-                    refresh_items.append({"aweme_id": aweme_id, "title": old["title"], "upload_date": old["upload_date"], "aweme_type": old["aweme_type"], "video_url": old["video_url"], "change_type": "remote_missing", "skip_reason": "作品已不在当前主页"})
+            # A bounded refresh intentionally does not observe older pages.
+            # Only an all-time refresh has enough coverage to declare an
+            # existing post missing from the remote profile.
+            if job["time_range"] == "all":
+                for aweme_id, old in existing.items():
+                    if old["remote_state"] == "active" and aweme_id not in discovered_ids:
+                        counts["missing"] += 1
+                        refresh_items.append({"aweme_id": aweme_id, "title": old["title"], "upload_date": old["upload_date"], "aweme_type": old["aweme_type"], "video_url": old["video_url"], "change_type": "remote_missing", "skip_reason": "作品已不在当前主页"})
             self.db.add_refresh_items(refresh_id, refresh_items)
             self.db.complete_refresh(refresh_id, counts, status="pending_confirmation")
             self.db.update_job(job_id, status="pending_confirmation", phase="confirmation", current_item=None)

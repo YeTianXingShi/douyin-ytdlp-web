@@ -1,7 +1,7 @@
 services:
   backend:
     # Pin this tag to the intended published release when upgrading.
-    image: ghcr.io/yetianxingshi/douyin-ytdlp-web:v0.0.3
+    image: ghcr.io/yetianxingshi/douyin-ytdlp-web:v0.0.4
     environment:
       # Replace this placeholder before exposing the service.
       ADMIN_TOKEN: "replace-with-a-long-random-token"

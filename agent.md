@@ -13,7 +13,7 @@
 - Web 后端位于 `backend/`，使用 FastAPI；前端位于 `frontend/`，使用 React + Vite。
 - 抖音用户主页列表由 `backend/app/profile_service.py` 独立枚举，视频详情和下载由 `backend/app/ytdlp_service.py` 调用本地 yt-dlp Python API 完成；不要把主页分页逻辑硬塞进上游 `DouyinIE`。
 - 任务状态由 SQLite 保存，并由单个串行 worker 执行；长任务必须通过任务状态接口和 SSE/状态流反馈，不要在 HTTP 请求线程中同步阻塞整批下载。
-- 远程部署使用服务器挂载的 Netscape/Mozilla Cookie 文件（`DOUYIN_COOKIE_FILE`）；API 请求和前端表单不得接收或回显原始 Cookie。
+- 远程部署使用服务器挂载的 Netscape/Mozilla Cookie 文件（`DOUYIN_COOKIE_FILE`）；API 请求和前端表单不得接收或回显原始 Cookie。Docker Secret 可能以只读方式挂载，服务启动时必须复制到容器 `/tmp` 下权限为 `0600` 的临时 Cookie 文件供 yt-dlp 使用，服务停止时删除临时副本；不得尝试回写 `/run/secrets`，也不得把临时副本持久化到 state 或下载目录。
 - `docker-compose.yml` 必须是可独立使用的部署配置，不要求项目 `.env` 文件；应用环境变量和 Cookie 文件路径直接写在 Compose 文件中，敏感占位值只能由部署者在本地替换，不能提交真实凭据。镜像必须固定为当前已发布的 `ghcr.io/yetianxingshi/douyin-ytdlp-web:v<VERSION>` 标签，发布新版本时同步更新 Compose 和文档中的标签，不使用 `latest` 或运行时镜像变量覆盖。
 - Python 依赖和运行环境统一由 `backend/pyproject.toml` 与 `uv` 管理；必须使用 `uv sync --project backend` 创建或更新 `backend/.venv`，使用 `uv run --project backend` 运行服务，禁止依赖系统 Python 或全局 pip 环境；不要恢复独立的 pip `requirements.txt` 作为安装入口。锁定文件 `backend/uv.lock` 如已生成应纳入版本控制。
 - 本地服务由根目录 `start.sh`、`stop.sh`、`restart.sh` 管理；三个脚本必须同时管理 FastAPI 后端和 React/Vite 前端。后端依赖使用 uv 隔离环境，前端依赖使用 `frontend/package-lock.json` 配合 npm 安装；PID、日志和 uv 缓存只写入 `state/`，脚本不得把 Cookie 或其他 secret 打印到终端或日志。`.env`（或 `ENV_FILE` 指定的文件）通过 uv 的 dotenv 解析器加载，不要用 shell `source` 解析配置。

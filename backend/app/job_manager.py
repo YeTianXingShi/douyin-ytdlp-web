@@ -77,6 +77,8 @@ class JobManager:
             self.db.update_profile_metadata(profile["id"], poster_file=str(image.relative_to(self.settings.download_root)))
 
     async def start(self) -> None:
+        self.cookies.prepare()
+        self.ytdlp.cookie_file = self.cookies.cookie_file
         self.settings.state_dir.mkdir(parents=True, exist_ok=True)
         self.settings.download_root.mkdir(parents=True, exist_ok=True)
         for job_id in self.db.recover_running():
@@ -87,6 +89,7 @@ class JobManager:
         if self.worker_task:
             self.worker_task.cancel()
             await asyncio.gather(self.worker_task, return_exceptions=True)
+        self.cookies.cleanup()
 
     @staticmethod
     def _dt(value: str | None) -> str | None:

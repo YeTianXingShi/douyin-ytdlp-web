@@ -47,25 +47,22 @@ cp .env.example .env
 
 ## Docker 与发布
 
-当前版本为 `v0.0.3`。GitHub Release 发布后，Actions 只使用本仓库源码构建 `linux/amd64` 镜像，并推送对应版本的 GHCR 标签：
+当前版本为 `v0.0.4`。GitHub Release 发布后，Actions 只使用本仓库源码构建 `linux/amd64` 镜像，并推送对应版本的 GHCR 标签：
 
 ```text
-ghcr.io/yetianxingshi/douyin-ytdlp-web:v0.0.3
-ghcr.io/yetianxingshi/douyin-ytdlp-web:0.0.3
+ghcr.io/yetianxingshi/douyin-ytdlp-web:v0.0.4
+ghcr.io/yetianxingshi/douyin-ytdlp-web:0.0.4
 ghcr.io/yetianxingshi/douyin-ytdlp-web:latest
 ```
 
-默认部署使用固定的 `v0.0.3` 标签；升级版本时请同步修改 `docker-compose.yml` 中的镜像标签：
+默认部署使用固定的 `v0.0.4` 标签；升级版本时请同步修改 `docker-compose.yml` 中的镜像标签：
 
 ```bash
 docker compose pull
 docker compose up -d
-
-docker compose pull
-docker compose up -d
 ```
 
-`docker-compose.yml` 是自包含配置，不要求项目 `.env` 文件；管理员 Token、浏览器 User-Agent、数据目录和 Cookie 文件路径都直接写在 Compose 文件中。镜像固定使用当前发布的 `ghcr.io/yetianxingshi/douyin-ytdlp-web:v0.0.3`。首次部署前请编辑其中的 `ADMIN_TOKEN` 占位值，并将 Netscape Cookie 文件放到 `./cookie/douyin-cookies.txt`；不要把真实 Token 或 Cookie 提交到 Git。
+`docker-compose.yml` 是自包含配置，不要求项目 `.env` 文件；管理员 Token、浏览器 User-Agent、数据目录和 Cookie 文件路径都直接写在 Compose 文件中。镜像固定使用当前发布的 `ghcr.io/yetianxingshi/douyin-ytdlp-web:v0.0.4`。首次部署前请编辑其中的 `ADMIN_TOKEN` 占位值，并将 Netscape Cookie 文件放到 `./cookie/douyin-cookies.txt`；服务启动时会将只读 Secret 复制到容器 `/tmp` 的权限受限临时文件，避免 yt-dlp 回写 `/run/secrets` 失败；不要把真实 Token 或 Cookie 提交到 Git。
 
 镜像内的 yt-dlp 来自锁定的 PyPI `yt-dlp[default]`，不包含任何外部源码仓库。版本号以根目录 `VERSION` 为准，并与后端、前端和镜像标签保持一致；发布说明见 `CHANGELOG.md`。
 

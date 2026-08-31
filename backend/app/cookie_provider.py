@@ -1,12 +1,40 @@
 from __future__ import annotations
 
 import http.cookiejar
+import os
+import shutil
+import tempfile
 from pathlib import Path
 
 
 class CookieProvider:
     def __init__(self, cookie_file: Path):
+        self.source_file = cookie_file
         self.cookie_file = cookie_file
+        self._runtime_file: Path | None = None
+
+    def prepare(self) -> None:
+        """Copy read-only Docker Secrets to a writable private temp file."""
+        self.validate()
+        file_descriptor, runtime_name = tempfile.mkstemp(
+            prefix="douyin-ytdlp-cookies-", suffix=".txt"
+        )
+        os.close(file_descriptor)
+        runtime_file = Path(runtime_name)
+        try:
+            shutil.copyfile(self.source_file, runtime_file)
+            os.chmod(runtime_file, 0o600)
+        except OSError as exc:
+            runtime_file.unlink(missing_ok=True)
+            raise RuntimeError("Cookie file cannot be prepared") from exc
+        self._runtime_file = runtime_file
+        self.cookie_file = runtime_file
+
+    def cleanup(self) -> None:
+        if self._runtime_file:
+            self._runtime_file.unlink(missing_ok=True)
+            self._runtime_file = None
+            self.cookie_file = self.source_file
 
     def validate(self) -> None:
         if not self.cookie_file.is_file():

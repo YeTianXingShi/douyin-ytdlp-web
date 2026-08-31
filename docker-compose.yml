@@ -1,10 +1,7 @@
 services:
   backend:
-    # Defaults to the rolling latest release. Override from the shell when
-    # deploying another repository or a pinned release, for example:
-    # IMAGE_TAG=v0.0.2 docker compose up -d
-    # IMAGE_REPOSITORY=ghcr.io/example/douyin-web IMAGE_TAG=0.0.2 docker compose up -d
-    image: ${IMAGE_REPOSITORY:-ghcr.io/yetianxingshi/douyin-ytdlp-web}:${IMAGE_TAG:-latest}
+    # Pin this tag to the intended published release when upgrading.
+    image: ghcr.io/yetianxingshi/douyin-ytdlp-web:v0.0.3
     environment:
       # Replace this placeholder before exposing the service.
       ADMIN_TOKEN: "replace-with-a-long-random-token"
